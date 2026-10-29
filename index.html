@@ -25,6 +25,20 @@
     #preload-progress { display: block; width: 100%; height: 18px; margin: 16px 0; }
     #preload-error { color: #ffb3b3; }
     #preload-retry { padding: 10px 18px; }
+    #demo-banner {
+      position: fixed;
+      top: max(12px, env(safe-area-inset-top));
+      left: 12px;
+      right: 12px;
+      z-index: 9999;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(15, 15, 15, 0.8);
+      color: #fff;
+      font: 14px Arial, sans-serif;
+      text-align: center;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -35,6 +49,9 @@
     <div id="preload-error" hidden></div>
     <button id="preload-retry" type="button" hidden>Повторити завантаження</button>
   </div>
+</div>
+<div id="demo-banner" role="status" hidden>
+  Демо трекінгу: натисни картку, щоб перевернути; свайпай, щоб змінити.
 </div>
 <a-scene mindar-image="imageTargetSrc: ./targets.mind;
                        filterMinCF: 0.0001;
@@ -100,6 +117,8 @@
     const preloadProgress = document.getElementById('preload-progress');
     const preloadError = document.getElementById('preload-error');
     const preloadRetry = document.getElementById('preload-retry');
+    const demoBanner = document.getElementById('demo-banner');
+    const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
     const scene = document.querySelector('a-scene');
     let activeCard = cards[0];
     let transitionTarget = null;
@@ -342,6 +361,29 @@
 
     function startAR() {
       if (arStarted) return;
+      if (demoMode) {
+        try {
+          target.removeAttribute('mindar-image-target');
+          target.object3D.matrixAutoUpdate = true;
+          target.setAttribute('position', '0 0 -2');
+          target.object3D.updateMatrixWorld(true);
+          target.setAttribute('visible', true);
+          markerVisible = true;
+          arStarted = true;
+          preloadOverlay.hidden = true;
+          demoBanner.hidden = false;
+          playSequence(cards.indexOf(activeCard));
+        } catch (error) {
+          arStarted = false;
+          preloadLabel.textContent = 'Не вдалося запустити демо.';
+          preloadError.textContent = error.message;
+          preloadError.hidden = false;
+          preloadRetry.textContent = 'Повторити запуск демо';
+          preloadRetry.hidden = false;
+          console.error('Unable to start tracking demo.', error);
+        }
+        return;
+      }
       preloadOverlay.hidden = false;
       preloadLabel.textContent = 'Зображення готові. Запуск камери...';
       preloadProgress.hidden = true;
