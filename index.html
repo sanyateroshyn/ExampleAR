@@ -6,6 +6,33 @@
   <title>AR</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script>
+    AFRAME.registerShader('keyed-video', {
+      schema: {
+        src: { type: 'map', is: 'uniform' },
+        opacity: { type: 'number', default: 1, is: 'uniform' }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D src;
+        uniform float opacity;
+        varying vec2 vUv;
+        void main() {
+          vec4 color = texture2D(src, vUv);
+          float brightness = max(max(color.r, color.g), color.b);
+          float alpha = smoothstep(0.01, 0.11, brightness);
+          vec3 foreground = color.rgb / max(alpha, 0.001);
+          gl_FragColor = vec4(foreground, color.a * alpha * opacity);
+        }
+      `
+    });
+  </script>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; }
     #preload-overlay {
@@ -69,8 +96,9 @@
       <img id="2_1_back"  src="./2_back.png">
       <img id="3_1_front" src="./3_bg.png">
       <img id="3_1_back"  src="./3_back.png">
-      <canvas id="sequence-canvas-a" width="920" height="950"></canvas>
-      <canvas id="sequence-canvas-b" width="920" height="950"></canvas>
+      <video id="sequence-video-1" src="./1.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
+      <video id="sequence-video-2" src="./2.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
+      <video id="sequence-video-3" src="./3.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"
@@ -88,12 +116,12 @@
         <a-image id="card-b" class="clickable" src="#1_1_front"
                  material="transparent: true; opacity: 0; depthWrite: false"
                  position="0 0 -0.001" width="1" height="1.481"></a-image>
-        <a-image id="sequence-a" src="#sequence-canvas-a"
-                 material="transparent: true; opacity: 1; depthWrite: false"
-                 position="0 -0.12 0.001" width="0.8" height="1.185"></a-image>
-        <a-image id="sequence-b" src="#sequence-canvas-b"
-                 material="transparent: true; opacity: 0; depthWrite: false"
-                 position="0 -0.12 0" width="0.8" height="1.185"></a-image>
+        <a-video id="sequence-a" src="#sequence-video-1"
+                 material="shader: keyed-video; transparent: true; opacity: 1; depthWrite: false"
+                 position="0 -0.12 0.001" width="0.8" height="1.185"></a-video>
+        <a-video id="sequence-b" src="#sequence-video-1"
+                 material="shader: keyed-video; transparent: true; opacity: 0; depthWrite: false"
+                 position="0 -0.12 0" width="0.8" height="1.185"></a-video>
       </a-entity>
     </a-entity>
   </a-scene>
@@ -110,6 +138,11 @@
       document.getElementById('sequence-a'),
       document.getElementById('sequence-b')
     ];
+    const sequenceVideos = [
+      document.getElementById('sequence-video-1'),
+      document.getElementById('sequence-video-2'),
+      document.getElementById('sequence-video-3')
+    ];
     const cardBg = document.getElementById('card-bg');
     const target = document.getElementById('target');
     const preloadOverlay = document.getElementById('preload-overlay');
@@ -123,32 +156,9 @@
     let activeCard = cards[0];
     let transitionTarget = null;
     let transitionMode = null;
-    const sequenceFrames = {
-      '1_1': Array.from({ length: 63 }, (_, index) => index),
-      '2_1': [
-        ...Array.from({ length: 18 }, (_, index) => index),
-        ...Array.from({ length: 37 }, (_, index) => index + 36)
-      ],
-      '3_1': Array.from({ length: 31 }, (_, index) => index)
-    };
-    const preloadedFirstFrames = {};
-    const imageCacheName = 'ar-image-sequences-v1';
-    let imageCache = null;
     let isPreloading = false;
     let assetsReady = false;
     let arStarted = false;
-    const sequenceCanvases = [
-      document.getElementById('sequence-canvas-a'),
-      document.getElementById('sequence-canvas-b')
-    ];
-    const sequenceTextures = [];
-    const sequencePlayers = sequenceCards.map((_, index) => ({
-      context: sequenceCanvases[index].getContext('2d'),
-      frameIndex: 0,
-      generation: 0,
-      timer: null,
-      failed: false
-    }));
     // ---- що робить кожен напрямок свайпу (міняй тут) ----
     const SWIPE_ACTIONS = {
       left:  'nextSet',
@@ -175,17 +185,8 @@
         sequenceCards[cardIndex].setAttribute('width', 0.8);
         sequenceCards[cardIndex].setAttribute('height', height * 0.8);
       }
+      sequenceCards[cardIndex].setAttribute('src', `#${sequenceVideos[setIdx].id}`);
       sequenceCards[cardIndex].setAttribute('material', 'opacity', side === 'front' ? 1 : 0);
-
-      const player = sequencePlayers[cardIndex];
-      player.generation++;
-      player.frameIndex = 0;
-      player.failed = false;
-      player.context.clearRect(0, 0, sequenceCanvases[cardIndex].width, sequenceCanvases[cardIndex].height);
-      sequenceTextures[cardIndex].needsUpdate = true;
-
-      const firstFrame = side === 'front' && preloadedFirstFrames[sets[setIdx]];
-      if (firstFrame) drawSequenceFrame(cardIndex, firstFrame);
     }
 
     function animateFade(card, name, from, to, duration = 250) {
@@ -194,84 +195,43 @@
         `property: material.opacity; from: ${from}; to: ${to}; dur: ${duration}; easing: easeInOutQuad`);
     }
 
-    function decodeImageBlob(blob) {
-      return new Promise((resolve, reject) => {
-        const image = new Image();
-        const objectUrl = URL.createObjectURL(blob);
-        image.onload = () => {
-          URL.revokeObjectURL(objectUrl);
-          resolve(image);
-        };
-        image.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          reject(new Error('Unable to decode a cached image.'));
-        };
-        image.src = objectUrl;
-      });
-    }
-
-    function stopSequence(cardIndex) {
-      const player = sequencePlayers[cardIndex];
-      player.generation++;
-      if (player.timer !== null) {
-        clearTimeout(player.timer);
-        player.timer = null;
-      }
-    }
-
-    function drawSequenceFrame(cardIndex, image) {
-      sequencePlayers[cardIndex].context.drawImage(
-        image, 0, 0, sequenceCanvases[cardIndex].width, sequenceCanvases[cardIndex].height
-      );
-      sequenceTextures[cardIndex].needsUpdate = true;
-    }
-
-    function sequenceFrameUrl(set, frame) {
-      const cocktail = set[0];
-      const frameNumber = String(frame).padStart(3, '0');
-      return `./seq_webp/${cocktail}/cocktail_${cocktail}_${frameNumber}.webp`;
-    }
-
-    async function loadCachedImage(url) {
-      if (!imageCache) throw new Error('Image cache is not initialized.');
-      const response = await imageCache.match(url);
-      if (!response) throw new Error(`Image is missing from the preload cache: ${url}`);
-      return decodeImageBlob(await response.blob());
-    }
-
     function playSequence(cardIndex) {
-      const player = sequencePlayers[cardIndex];
-      const set = sets[setIdx];
-      const frames = sequenceFrames[set];
-      if (!markerVisible || side !== 'front' || isTransitioning || player.failed ||
-          !frames || player.frameIndex >= frames.length) return;
-
-      stopSequence(cardIndex);
-      const generation = player.generation;
-      const frame = frames[player.frameIndex];
-      const drawFrame = image => {
-        if (generation !== player.generation || !markerVisible || side !== 'front') return;
-        player.context.clearRect(0, 0, sequenceCanvases[cardIndex].width, sequenceCanvases[cardIndex].height);
-        drawSequenceFrame(cardIndex, image);
-        player.frameIndex++;
-        if (player.frameIndex < frames.length) {
-          player.timer = setTimeout(() => playSequence(cardIndex), 83);
-        }
-      };
-
-      if (frame === 0 && preloadedFirstFrames[set]) {
-        drawFrame(preloadedFirstFrames[set]);
-        return;
-      }
-
-      loadCachedImage(sequenceFrameUrl(set, frame)).then(drawFrame).catch(error => {
-        if (generation !== player.generation) return;
-        player.failed = true;
-        console.error(`Unable to load sequence frame: ${sequenceFrameUrl(set, frame)}`, error);
+      if (!markerVisible || side !== 'front' || isTransitioning) return;
+      const video = sequenceVideos[setIdx];
+      sequenceVideos.forEach(item => {
+        if (item !== video) item.pause();
+      });
+      video.play().catch(error => {
+        console.error(`Unable to play ${video.currentSrc || video.src}.`, error);
       });
     }
 
-    async function preloadImages() {
+    function stopSequence() {
+      sequenceVideos.forEach(video => video.pause());
+    }
+
+    function waitForVideo(video) {
+      if (video.error) {
+        return Promise.reject(new Error(`Unable to load ${video.currentSrc || video.src} (media error ${video.error.code}).`));
+      }
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => finish(new Error(`Timed out loading ${video.currentSrc || video.src}.`)), 30000);
+        const finish = error => {
+          clearTimeout(timeout);
+          video.removeEventListener('loadeddata', onLoaded);
+          video.removeEventListener('error', onError);
+          if (error) reject(error);
+          else resolve();
+        };
+        const onLoaded = () => finish();
+        const onError = () => finish(new Error(`Unable to load ${video.currentSrc || video.src} (media error ${video.error?.code || 'unknown'}).`));
+        video.addEventListener('loadeddata', onLoaded, { once: true });
+        video.addEventListener('error', onError, { once: true });
+      });
+    }
+
+    async function preloadMedia() {
       if (isPreloading) return;
       isPreloading = true;
       preloadOverlay.hidden = false;
@@ -281,74 +241,34 @@
       preloadRetry.disabled = true;
       preloadRetry.textContent = 'Повторити завантаження';
 
-      try {
-        if (!('caches' in window)) {
-          throw new Error('This browser does not support persistent image caching.');
-        }
-        imageCache = await caches.open(imageCacheName);
-      } catch (error) {
-        isPreloading = false;
-        preloadLabel.textContent = 'Не вдалося підготувати кеш зображень.';
-        preloadError.textContent = error.message;
-        preloadError.hidden = false;
-        preloadRetry.hidden = false;
-        preloadRetry.disabled = false;
-        console.error('Unable to initialize the image cache.', error);
-        return;
-      }
-
-      const jobs = [
-        ...sets.map(set => ({
-          set,
-          url: sequenceFrameUrl(set, 0)
-        })),
-        ...['1_bg.png', '1_back.png', '2_bg.png', '2_back.png', '3_bg.png', '3_back.png']
-          .map(url => ({ url: `./${url}` })),
-        ...sets.flatMap(set => sequenceFrames[set]
-          .filter(frame => frame !== 0)
-          .map(frame => ({
-            url: sequenceFrameUrl(set, frame)
-          })))
-      ];
+      const images = ['1_1_front', '1_1_back', '2_1_front', '2_1_back', '3_1_front', '3_1_back']
+        .map(id => document.getElementById(id));
+      const jobs = [...images, ...sequenceVideos];
       const failures = [];
       let completed = 0;
-      let nextJob = 0;
       preloadProgress.max = jobs.length;
       preloadProgress.value = completed;
-      preloadLabel.textContent = `Завантаження зображень: ${completed} / ${jobs.length}`;
-
-      async function preloadWorker() {
-        while (nextJob < jobs.length) {
-          const job = jobs[nextJob++];
-          try {
-            let response = await imageCache.match(job.url);
-            if (!response) {
-              response = await fetch(job.url);
-              if (!response.ok) {
-                throw new Error(`Unable to preload ${job.url}: HTTP ${response.status}`);
-              }
-              await imageCache.put(job.url, response.clone());
-            }
-            const image = await decodeImageBlob(await response.blob());
-            if (job.set) {
-              preloadedFirstFrames[job.set] = image;
-            }
-          } catch (error) {
-            failures.push(error.message);
-          } finally {
-            completed++;
-            preloadProgress.value = completed;
-            preloadLabel.textContent = `Завантаження зображень: ${completed} / ${jobs.length}`;
+      preloadLabel.textContent = `Завантаження медіафайлів: ${completed} / ${jobs.length}`;
+      await Promise.all(jobs.map(async media => {
+        try {
+          if (media instanceof HTMLVideoElement) {
+            await waitForVideo(media);
+          } else {
+            await media.decode();
           }
+        } catch (error) {
+          failures.push(error.message);
+        } finally {
+          completed++;
+          preloadProgress.value = completed;
+          preloadLabel.textContent = `Завантаження медіафайлів: ${completed} / ${jobs.length}`;
         }
-      }
-
-      await Promise.all([preloadWorker(), preloadWorker()]);
+      }));
       isPreloading = false;
       preloadRetry.disabled = false;
       if (failures.length) {
-        console.error('Some images failed to preload:', failures);
-        preloadLabel.textContent = `Не вдалося завантажити ${failures.length} з ${jobs.length} зображень.`;
+        console.error('Some media assets failed to preload:', failures);
+        preloadLabel.textContent = `Не вдалося завантажити ${failures.length} з ${jobs.length} файлів.`;
         preloadError.textContent = 'Перевірте з’єднання та повторіть спробу.';
         preloadError.hidden = false;
         preloadRetry.hidden = false;
@@ -407,7 +327,10 @@
 
     preloadRetry.addEventListener('click', () => {
       if (assetsReady) startAR();
-      else preloadImages();
+      else {
+        sequenceVideos.forEach(video => video.load());
+        preloadMedia();
+      }
     });
 
     scene.addEventListener('arReady', () => {
@@ -434,7 +357,7 @@
       const outgoingIndex = cards.indexOf(outgoingCard);
       transitionTarget = cards.find(card => card !== activeCard);
       const incomingIndex = cards.indexOf(transitionTarget);
-      stopSequence(outgoingIndex);
+      stopSequence();
       render(transitionTarget);
       outgoingCard.setAttribute('position', '0 0 -0.001');
       transitionTarget.setAttribute('position', '0 0 0');
@@ -479,7 +402,7 @@
     });
     target.addEventListener('targetLost',  () => {
       markerVisible = false;
-      sequencePlayers.forEach((_, index) => stopSequence(index));
+      stopSequence();
     });
 
     // ---- свайп ----
@@ -531,19 +454,9 @@
     });
 
     scene.addEventListener('loaded', () => {
-      sequenceCanvases.forEach((canvas, index) => {
-        const mesh = sequenceCards[index].getObject3D('mesh');
-        const texture = mesh.material.map;
-        if (!texture) {
-          console.error(`Canvas texture was not initialized for ${sequenceCards[index].id}`);
-          return;
-        }
-        texture.colorSpace = THREE.SRGBColorSpace;
-        sequenceTextures[index] = texture;
-      });
       render(activeCard);
       preloadProgress.hidden = false;
-      preloadImages();
+      preloadMedia();
     });
   </script>
 </body>
