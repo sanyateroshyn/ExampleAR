@@ -210,27 +210,6 @@
       sequenceVideos.forEach(video => video.pause());
     }
 
-    function waitForVideo(video) {
-      if (video.error) {
-        return Promise.reject(new Error(`Unable to load ${video.currentSrc || video.src} (media error ${video.error.code}).`));
-      }
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => finish(new Error(`Timed out loading ${video.currentSrc || video.src}.`)), 30000);
-        const finish = error => {
-          clearTimeout(timeout);
-          video.removeEventListener('loadeddata', onLoaded);
-          video.removeEventListener('error', onError);
-          if (error) reject(error);
-          else resolve();
-        };
-        const onLoaded = () => finish();
-        const onError = () => finish(new Error(`Unable to load ${video.currentSrc || video.src} (media error ${video.error?.code || 'unknown'}).`));
-        video.addEventListener('loadeddata', onLoaded, { once: true });
-        video.addEventListener('error', onError, { once: true });
-      });
-    }
-
     async function preloadMedia() {
       if (isPreloading) return;
       isPreloading = true;
@@ -243,32 +222,27 @@
 
       const images = ['1_1_front', '1_1_back', '2_1_front', '2_1_back', '3_1_front', '3_1_back']
         .map(id => document.getElementById(id));
-      const jobs = [...images, ...sequenceVideos];
       const failures = [];
       let completed = 0;
-      preloadProgress.max = jobs.length;
+      preloadProgress.max = images.length;
       preloadProgress.value = completed;
-      preloadLabel.textContent = `Завантаження медіафайлів: ${completed} / ${jobs.length}`;
-      await Promise.all(jobs.map(async media => {
+      preloadLabel.textContent = `Завантаження зображень: ${completed} / ${images.length}`;
+      await Promise.all(images.map(async media => {
         try {
-          if (media instanceof HTMLVideoElement) {
-            await waitForVideo(media);
-          } else {
-            await media.decode();
-          }
+          await media.decode();
         } catch (error) {
           failures.push(error.message);
         } finally {
           completed++;
           preloadProgress.value = completed;
-          preloadLabel.textContent = `Завантаження медіафайлів: ${completed} / ${jobs.length}`;
+          preloadLabel.textContent = `Завантаження зображень: ${completed} / ${images.length}`;
         }
       }));
       isPreloading = false;
       preloadRetry.disabled = false;
       if (failures.length) {
-        console.error('Some media assets failed to preload:', failures);
-        preloadLabel.textContent = `Не вдалося завантажити ${failures.length} з ${jobs.length} файлів.`;
+        console.error('Some card images failed to preload:', failures);
+        preloadLabel.textContent = `Не вдалося завантажити ${failures.length} з ${images.length} зображень.`;
         preloadError.textContent = 'Перевірте з’єднання та повторіть спробу.';
         preloadError.hidden = false;
         preloadRetry.hidden = false;
@@ -327,10 +301,7 @@
 
     preloadRetry.addEventListener('click', () => {
       if (assetsReady) startAR();
-      else {
-        sequenceVideos.forEach(video => video.load());
-        preloadMedia();
-      }
+      else preloadMedia();
     });
 
     scene.addEventListener('arReady', () => {
