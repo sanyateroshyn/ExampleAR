@@ -110,7 +110,12 @@
       '2_1': document.getElementById('sequence-video-2'),
       '3_1': document.getElementById('sequence-video-3')
     };
-    const mediaCacheName = 'ar-media-v1';
+    const sequenceVideoUrls = {
+      '1_1': './1-vp8.webm',
+      '2_1': './2-vp8.webm',
+      '3_1': './3-vp8.webm'
+    };
+    const mediaCacheName = 'ar-media-v2';
     let mediaCache = null;
     let resetSequenceOnPlay = true;
     let isPreloading = false;
@@ -247,7 +252,7 @@
       const jobs = [
         ...sets.map(set => ({
           video: sequenceVideos[set],
-          url: `./${set[0]}.webm`
+          url: sequenceVideoUrls[set]
         })),
         ...['1_bg.png', '1_back.png', '2_bg.png', '2_back.png', '3_bg.png', '3_back.png']
           .map(url => ({ url: `./${url}` })),
