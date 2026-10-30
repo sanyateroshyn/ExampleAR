@@ -142,6 +142,7 @@
     let assetsReady = false;
     let arStarted = false;
     let soundEnabled = false;
+    const pendingVideoResets = new WeakMap();
     // ---- що робить кожен напрямок свайпу (міняй тут) ----
     const SWIPE_ACTIONS = {
       left:  'nextSet',
@@ -186,6 +187,17 @@
       sequenceVideos.forEach(item => {
         if (item !== video) item.pause();
       });
+      const pendingReset = pendingVideoResets.get(video);
+      if (pendingReset) {
+        pendingReset.then(() => {
+          if (markerVisible && side === 'front' && !isTransitioning && sequenceVideos[setIdx] === video) {
+            playSequence(cardIndex);
+          }
+        }, error => {
+          console.error('Unable to reset the video before playback.', error);
+        });
+        return;
+      }
       video.muted = !soundEnabled;
       video.play().catch(error => {
         console.error(`Unable to play ${video.currentSrc || video.src}.`, error);
@@ -197,14 +209,56 @@
     }
 
     function resetSequence(video = sequenceVideos[setIdx]) {
+      const pendingReset = pendingVideoResets.get(video);
+      if (pendingReset) return pendingReset;
+
       video.pause();
-      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
-        video.currentTime = 0;
-        return;
-      }
-      video.addEventListener('loadedmetadata', () => {
-        video.currentTime = 0;
-      }, { once: true });
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA &&
+          video.currentTime === 0 && !video.seeking) return Promise.resolve();
+
+      let resolveReset;
+      let rejectReset;
+      const reset = new Promise((resolve, reject) => {
+        resolveReset = resolve;
+        rejectReset = reject;
+      });
+      pendingVideoResets.set(video, reset);
+
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', seekToStart);
+        video.removeEventListener('seeked', finishReset);
+        video.removeEventListener('error', failReset);
+        pendingVideoResets.delete(video);
+      };
+      const finishReset = () => {
+        if (video.seeking || video.currentTime !== 0) return;
+        cleanup();
+        resolveReset();
+      };
+      const failReset = () => {
+        cleanup();
+        rejectReset(video.error || new Error(`Unable to reset ${video.currentSrc || video.src}.`));
+      };
+      const seekToStart = () => {
+        if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+        if (video.currentTime === 0 && !video.seeking) {
+          finishReset();
+          return;
+        }
+        try {
+          video.currentTime = 0;
+          finishReset();
+        } catch (error) {
+          cleanup();
+          rejectReset(error);
+        }
+      };
+
+      video.addEventListener('loadedmetadata', seekToStart);
+      video.addEventListener('seeked', finishReset);
+      video.addEventListener('error', failReset);
+      seekToStart();
+      return reset;
     }
 
     async function preloadMedia() {
@@ -349,9 +403,14 @@
         sequenceCards[incomingIndex].setAttribute('material', 'opacity', 0);
         animateFade(outgoingCard, 'fadeout', outgoingSide === 'back' ? 1 : 0, 0, 120);
         animateFade(sequenceCards[outgoingIndex], 'fadeout', outgoingSide === 'front' ? 1 : 0, 0, 120);
-        window.setTimeout(() => {
+        window.setTimeout(async () => {
           if (transitionMode !== 'sequential' || !transitionTarget) return;
-          resetSequence(outgoingVideo);
+          try {
+            await resetSequence(outgoingVideo);
+          } catch (error) {
+            console.error('Unable to reset the outgoing video.', error);
+          }
+          if (transitionMode !== 'sequential' || !transitionTarget) return;
           const nextIndex = cards.indexOf(transitionTarget);
           sequenceCards[cards.indexOf(activeCard)].setAttribute('material', 'opacity', 0);
           animateFade(transitionTarget, 'fadein', 0, side === 'back' ? 1 : 0, 120);
@@ -373,7 +432,11 @@
         transitionTarget = null;
         isTransitioning = false;
         transitionMode = null;
-        if (side === 'back') resetSequence();
+        if (side === 'back') {
+          resetSequence().catch(error => {
+            console.error('Unable to reset the current video.', error);
+          });
+        }
         else if (markerVisible) playSequence(cards.indexOf(activeCard));
       });
     });
