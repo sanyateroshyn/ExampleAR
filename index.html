@@ -196,6 +196,17 @@
       sequenceVideos.forEach(video => video.pause());
     }
 
+    function resetSequence(video = sequenceVideos[setIdx]) {
+      video.pause();
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        video.currentTime = 0;
+        return;
+      }
+      video.addEventListener('loadedmetadata', () => {
+        video.currentTime = 0;
+      }, { once: true });
+    }
+
     async function preloadMedia() {
       if (isPreloading) return;
       isPreloading = true;
@@ -320,6 +331,7 @@
       if (isTransitioning) return;
       isTransitioning = true;
       transitionMode = action === 'nextSet' || action === 'prevSet' ? 'sequential' : 'crossfade';
+      const outgoingVideo = sequenceVideos[setIdx];
       const outgoingSide = side;
       actions[action]();
       const outgoingCard = activeCard;
@@ -339,6 +351,7 @@
         animateFade(sequenceCards[outgoingIndex], 'fadeout', outgoingSide === 'front' ? 1 : 0, 0, 120);
         window.setTimeout(() => {
           if (transitionMode !== 'sequential' || !transitionTarget) return;
+          resetSequence(outgoingVideo);
           const nextIndex = cards.indexOf(transitionTarget);
           sequenceCards[cards.indexOf(activeCard)].setAttribute('material', 'opacity', 0);
           animateFade(transitionTarget, 'fadein', 0, side === 'back' ? 1 : 0, 120);
@@ -360,7 +373,8 @@
         transitionTarget = null;
         isTransitioning = false;
         transitionMode = null;
-        if (markerVisible && side === 'front') playSequence(cards.indexOf(activeCard));
+        if (side === 'back') resetSequence();
+        else if (markerVisible) playSequence(cards.indexOf(activeCard));
       });
     });
 
