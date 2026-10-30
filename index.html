@@ -81,9 +81,9 @@
       <img id="1_1_back" src="./1_back.png">
       <img id="2_1_back" src="./2_back.png">
       <img id="3_1_back" src="./3_back.png">
-      <video id="sequence-video-1" src="./1.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
-      <video id="sequence-video-2" src="./2.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
-      <video id="sequence-video-3" src="./3.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
+      <video id="sequence-video-1" src="./1.mp4" muted playsinline crossorigin="anonymous" preload="metadata"></video>
+      <video id="sequence-video-2" src="./2.mp4" muted playsinline crossorigin="anonymous" preload="metadata"></video>
+      <video id="sequence-video-3" src="./3.mp4" muted playsinline crossorigin="anonymous" preload="metadata"></video>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"
@@ -159,15 +159,18 @@
     function render(card) {
       const id = `${sets[setIdx]}_back`;
       const img = document.getElementById(id);
+      const video = sequenceVideos[setIdx];
       const cardIndex = cards.indexOf(card);
+      const height = video.videoWidth && video.videoHeight
+        ? video.videoHeight / video.videoWidth
+        : (img && img.naturalWidth ? img.naturalHeight / img.naturalWidth : 1.481);
       card.setAttribute('src', '#' + id);
-      if (img && img.naturalWidth) {
-        const height = img.naturalHeight / img.naturalWidth;
-        card.setAttribute('height', height);
-        sequenceCards[cardIndex].setAttribute('height', height);
-      }
+      card.setAttribute('width', 1);
+      card.setAttribute('height', height);
+      sequenceCards[cardIndex].setAttribute('width', 1);
+      sequenceCards[cardIndex].setAttribute('height', height);
       card.setAttribute('material', 'opacity', side === 'back' ? 1 : 0);
-      sequenceCards[cardIndex].setAttribute('src', `#${sequenceVideos[setIdx].id}`);
+      sequenceCards[cardIndex].setAttribute('src', `#${video.id}`);
       sequenceCards[cardIndex].setAttribute('material', 'opacity', side === 'front' ? 1 : 0);
     }
 
@@ -327,8 +330,8 @@
       render(transitionTarget);
       outgoingCard.setAttribute('position', '0 0 -0.001');
       transitionTarget.setAttribute('position', '0 0 0');
-      sequenceCards[outgoingIndex].setAttribute('position', '0 -0.12 -0.0005');
-      sequenceCards[incomingIndex].setAttribute('position', '0 -0.12 0.001');
+      sequenceCards[outgoingIndex].setAttribute('position', '0 0 -0.0005');
+      sequenceCards[incomingIndex].setAttribute('position', '0 0 0.001');
       if (transitionMode === 'sequential') {
         transitionTarget.setAttribute('material', 'opacity', 0);
         sequenceCards[incomingIndex].setAttribute('material', 'opacity', 0);
