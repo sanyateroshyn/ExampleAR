@@ -98,10 +98,10 @@
         <a-image id="card-b" class="clickable" src="#1_1_back"
                  material="transparent: true; opacity: 0; depthWrite: false"
                  position="0 0 -0.001" width="1" height="1.481"></a-image>
-        <a-video id="sequence-a" src="#sequence-video-1"
+        <a-video id="sequence-a" class="clickable" src="#sequence-video-1"
                  material="shader: flat; transparent: true; opacity: 1; depthWrite: false"
                  position="0 0 0.001" width="1" height="1.481"></a-video>
-        <a-video id="sequence-b" src="#sequence-video-1"
+        <a-video id="sequence-b" class="clickable" src="#sequence-video-1"
                  material="shader: flat; transparent: true; opacity: 0; depthWrite: false"
                  position="0 0 0" width="1" height="1.481"></a-video>
       </a-entity>
@@ -362,6 +362,10 @@
         transitionMode = null;
         if (markerVisible && side === 'front') playSequence(cards.indexOf(activeCard));
       });
+    });
+
+    sequenceCards.forEach(card => {
+      card.addEventListener('click', () => run('flip'));
     });
 
     // ---- видимість маркера ----
