@@ -6,33 +6,6 @@
   <title>AR</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-  <script>
-    AFRAME.registerShader('keyed-video', {
-      schema: {
-        src: { type: 'map', is: 'uniform' },
-        opacity: { type: 'number', default: 1, is: 'uniform' }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D src;
-        uniform float opacity;
-        varying vec2 vUv;
-        void main() {
-          vec4 color = texture2D(src, vUv);
-          float brightness = max(max(color.r, color.g), color.b);
-          float alpha = smoothstep(0.01, 0.11, brightness);
-          vec3 foreground = color.rgb / max(alpha, 0.001);
-          gl_FragColor = vec4(foreground, color.a * alpha * opacity);
-        }
-      `
-    });
-  </script>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; }
     #preload-overlay {
@@ -66,6 +39,20 @@
       text-align: center;
       pointer-events: none;
     }
+    #sound-toggle {
+      position: fixed;
+      left: 50%;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      z-index: 9999;
+      transform: translateX(-50%);
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(15, 15, 15, 0.85);
+      color: #fff;
+      font: 16px Arial, sans-serif;
+    }
+    #sound-toggle[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -80,7 +67,8 @@
 <div id="demo-banner" role="status" hidden>
   Демо трекінгу: натисни картку, щоб перевернути; свайпай, щоб змінити.
 </div>
-<a-scene mindar-image="imageTargetSrc: ./targets.mind;
+<button id="sound-toggle" type="button" aria-pressed="false" hidden>Увімкнути звук</button>
+<a-scene mindar-image="imageTargetSrc: ./target.mind;
                        filterMinCF: 0.0001;
                        filterBeta: 10;
                        warmupTolerance: 3;
@@ -90,15 +78,12 @@
          device-orientation-permission-ui="enabled: false">
 
     <a-assets>
-      <img id="1_1_front" src="./1_bg.png">
-      <img id="1_1_back"  src="./1_back.png">
-      <img id="2_1_front" src="./2_bg.png">
-      <img id="2_1_back"  src="./2_back.png">
-      <img id="3_1_front" src="./3_bg.png">
-      <img id="3_1_back"  src="./3_back.png">
-      <video id="sequence-video-1" src="./1.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
-      <video id="sequence-video-2" src="./2.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
-      <video id="sequence-video-3" src="./3.mp4" autoplay loop muted playsinline crossorigin="anonymous" preload="auto"></video>
+      <img id="1_1_back" src="./1_back.png">
+      <img id="2_1_back" src="./2_back.png">
+      <img id="3_1_back" src="./3_back.png">
+      <video id="sequence-video-1" src="./1.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
+      <video id="sequence-video-2" src="./2.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
+      <video id="sequence-video-3" src="./3.mp4" loop muted playsinline crossorigin="anonymous" preload="metadata"></video>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"
@@ -106,22 +91,19 @@
               raycaster="far: 10000; objects: .clickable"></a-camera>
 
     <a-entity id="target" mindar-image-target="targetIndex: 0">
-      <!-- контейнер: у ньому змінюється зображення -->
       <a-entity id="container" position="0 0 0" scale="2 2 2">
-        <a-plane id="card-bg" color="#fff" position="0 0 -0.002"
-                 width="1" height="1.481"></a-plane>
-        <a-image id="card-a" class="clickable" src="#1_1_front"
+        <a-image id="card-a" class="clickable" src="#1_1_back"
                  material="transparent: true; opacity: 1; depthWrite: false"
                  position="0 0 0" width="1" height="1.481"></a-image>
-        <a-image id="card-b" class="clickable" src="#1_1_front"
+        <a-image id="card-b" class="clickable" src="#1_1_back"
                  material="transparent: true; opacity: 0; depthWrite: false"
                  position="0 0 -0.001" width="1" height="1.481"></a-image>
         <a-video id="sequence-a" src="#sequence-video-1"
-                 material="shader: keyed-video; transparent: true; opacity: 1; depthWrite: false"
-                 position="0 -0.12 0.001" width="0.8" height="1.185"></a-video>
+                 material="shader: flat; transparent: true; opacity: 1; depthWrite: false"
+                 position="0 0 0.001" width="1" height="1.481"></a-video>
         <a-video id="sequence-b" src="#sequence-video-1"
-                 material="shader: keyed-video; transparent: true; opacity: 0; depthWrite: false"
-                 position="0 -0.12 0" width="0.8" height="1.185"></a-video>
+                 material="shader: flat; transparent: true; opacity: 0; depthWrite: false"
+                 position="0 0 0" width="1" height="1.481"></a-video>
       </a-entity>
     </a-entity>
   </a-scene>
@@ -143,7 +125,6 @@
       document.getElementById('sequence-video-2'),
       document.getElementById('sequence-video-3')
     ];
-    const cardBg = document.getElementById('card-bg');
     const target = document.getElementById('target');
     const preloadOverlay = document.getElementById('preload-overlay');
     const preloadLabel = document.getElementById('preload-label');
@@ -151,6 +132,7 @@
     const preloadError = document.getElementById('preload-error');
     const preloadRetry = document.getElementById('preload-retry');
     const demoBanner = document.getElementById('demo-banner');
+    const soundToggle = document.getElementById('sound-toggle');
     const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
     const scene = document.querySelector('a-scene');
     let activeCard = cards[0];
@@ -159,6 +141,7 @@
     let isPreloading = false;
     let assetsReady = false;
     let arStarted = false;
+    let soundEnabled = false;
     // ---- що робить кожен напрямок свайпу (міняй тут) ----
     const SWIPE_ACTIONS = {
       left:  'nextSet',
@@ -174,17 +157,16 @@
     };
 
     function render(card) {
-      const id = `${sets[setIdx]}_${side}`;
+      const id = `${sets[setIdx]}_back`;
       const img = document.getElementById(id);
       const cardIndex = cards.indexOf(card);
       card.setAttribute('src', '#' + id);
       if (img && img.naturalWidth) {
         const height = img.naturalHeight / img.naturalWidth;
         card.setAttribute('height', height);
-        cardBg.setAttribute('height', height);
-        sequenceCards[cardIndex].setAttribute('width', 0.8);
-        sequenceCards[cardIndex].setAttribute('height', height * 0.8);
+        sequenceCards[cardIndex].setAttribute('height', height);
       }
+      card.setAttribute('material', 'opacity', side === 'back' ? 1 : 0);
       sequenceCards[cardIndex].setAttribute('src', `#${sequenceVideos[setIdx].id}`);
       sequenceCards[cardIndex].setAttribute('material', 'opacity', side === 'front' ? 1 : 0);
     }
@@ -201,6 +183,7 @@
       sequenceVideos.forEach(item => {
         if (item !== video) item.pause();
       });
+      video.muted = !soundEnabled;
       video.play().catch(error => {
         console.error(`Unable to play ${video.currentSrc || video.src}.`, error);
       });
@@ -220,7 +203,7 @@
       preloadRetry.disabled = true;
       preloadRetry.textContent = 'Повторити завантаження';
 
-      const images = ['1_1_front', '1_1_back', '2_1_front', '2_1_back', '3_1_front', '3_1_back']
+      const images = ['1_1_back', '2_1_back', '3_1_back']
         .map(id => document.getElementById(id));
       const failures = [];
       let completed = 0;
@@ -266,6 +249,7 @@
           arStarted = true;
           preloadOverlay.hidden = true;
           demoBanner.hidden = false;
+          soundToggle.hidden = false;
           playSequence(cards.indexOf(activeCard));
         } catch (error) {
           arStarted = false;
@@ -304,8 +288,19 @@
       else preloadMedia();
     });
 
+    soundToggle.addEventListener('click', () => {
+      soundEnabled = !soundEnabled;
+      sequenceVideos.forEach(video => {
+        video.muted = !soundEnabled;
+      });
+      soundToggle.textContent = soundEnabled ? 'Вимкнути звук' : 'Увімкнути звук';
+      soundToggle.setAttribute('aria-pressed', String(soundEnabled));
+      if (markerVisible && side === 'front') playSequence(cards.indexOf(activeCard));
+    });
+
     scene.addEventListener('arReady', () => {
       preloadOverlay.hidden = true;
+      soundToggle.hidden = false;
     });
     scene.addEventListener('arError', event => {
       arStarted = false;
@@ -337,11 +332,18 @@
       if (transitionMode === 'sequential') {
         transitionTarget.setAttribute('material', 'opacity', 0);
         sequenceCards[incomingIndex].setAttribute('material', 'opacity', 0);
-        animateFade(outgoingCard, 'fadeout', 1, 0, 120);
+        animateFade(outgoingCard, 'fadeout', outgoingSide === 'back' ? 1 : 0, 0, 120);
         animateFade(sequenceCards[outgoingIndex], 'fadeout', outgoingSide === 'front' ? 1 : 0, 0, 120);
+        window.setTimeout(() => {
+          if (transitionMode !== 'sequential' || !transitionTarget) return;
+          const nextIndex = cards.indexOf(transitionTarget);
+          sequenceCards[cards.indexOf(activeCard)].setAttribute('material', 'opacity', 0);
+          animateFade(transitionTarget, 'fadein', 0, side === 'back' ? 1 : 0, 120);
+          animateFade(sequenceCards[nextIndex], 'fadein', 0, side === 'front' ? 1 : 0, 120);
+        }, 130);
       } else {
-        animateFade(outgoingCard, 'fadeout', 1, 0);
-        animateFade(transitionTarget, 'fadein', 0, 1);
+        animateFade(outgoingCard, 'fadeout', outgoingSide === 'back' ? 1 : 0, 0);
+        animateFade(transitionTarget, 'fadein', 0, side === 'back' ? 1 : 0);
         animateFade(sequenceCards[outgoingIndex], 'fadeout', outgoingSide === 'front' ? 1 : 0, 0);
         animateFade(sequenceCards[incomingIndex], 'fadein', 0, side === 'front' ? 1 : 0);
       }
@@ -349,13 +351,6 @@
 
     cards.forEach(card => {
       card.addEventListener('click', () => run('flip'));
-      card.addEventListener('animationcomplete__fadeout', () => {
-        if (transitionMode !== 'sequential' || card !== activeCard || !transitionTarget) return;
-        const incomingIndex = cards.indexOf(transitionTarget);
-        sequenceCards[cards.indexOf(activeCard)].setAttribute('material', 'opacity', 0);
-        animateFade(transitionTarget, 'fadein', 0, 1, 120);
-        animateFade(sequenceCards[incomingIndex], 'fadein', 0, side === 'front' ? 1 : 0, 120);
-      });
       card.addEventListener('animationcomplete__fadein', () => {
         if (card !== transitionTarget) return;
         activeCard = card;
