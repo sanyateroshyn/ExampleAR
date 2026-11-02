@@ -39,6 +39,37 @@
       text-align: center;
       pointer-events: none;
     }
+    #tracking-controls {
+      position: fixed;
+      top: max(60px, calc(env(safe-area-inset-top) + 48px));
+      right: 12px;
+      z-index: 9998;
+      width: min(280px, calc(100vw - 24px));
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(15, 15, 15, 0.88);
+      color: #fff;
+      font: 13px Arial, sans-serif;
+    }
+    #tracking-controls h2 { margin: 0 0 8px; font-size: 14px; }
+    .tracking-control-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 68px 32px 32px;
+      align-items: center;
+      gap: 6px;
+      min-height: 38px;
+    }
+    .tracking-control-row output { text-align: right; font-variant-numeric: tabular-nums; }
+    .tracking-control-row button {
+      min-width: 32px;
+      min-height: 32px;
+      border: 0;
+      border-radius: 5px;
+      background: #444;
+      color: #fff;
+      font-size: 18px;
+      touch-action: manipulation;
+    }
     #sound-toggle {
       position: fixed;
       left: 50%;
@@ -67,6 +98,33 @@
 <div id="demo-banner" role="status" hidden>
   Демо трекінгу: натисни картку, щоб перевернути; свайпай, щоб змінити.
 </div>
+<section id="tracking-controls" aria-label="Налаштування трекінгу">
+  <h2>Налаштування трекінгу</h2>
+  <div class="tracking-control-row">
+    <span>filterMinCF</span>
+    <output data-tracking-value="filterMinCF" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="filterMinCF" data-direction="-1" aria-label="Зменшити filterMinCF" disabled>-</button>
+    <button type="button" data-tracking-setting="filterMinCF" data-direction="1" aria-label="Збільшити filterMinCF" disabled>+</button>
+  </div>
+  <div class="tracking-control-row">
+    <span>filterBeta</span>
+    <output data-tracking-value="filterBeta" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="filterBeta" data-direction="-1" aria-label="Зменшити filterBeta" disabled>-</button>
+    <button type="button" data-tracking-setting="filterBeta" data-direction="1" aria-label="Збільшити filterBeta" disabled>+</button>
+  </div>
+  <div class="tracking-control-row">
+    <span>warmupTolerance</span>
+    <output data-tracking-value="warmupTolerance" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="warmupTolerance" data-direction="-1" aria-label="Зменшити warmupTolerance" disabled>-</button>
+    <button type="button" data-tracking-setting="warmupTolerance" data-direction="1" aria-label="Збільшити warmupTolerance" disabled>+</button>
+  </div>
+  <div class="tracking-control-row">
+    <span>missTolerance</span>
+    <output data-tracking-value="missTolerance" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="missTolerance" data-direction="-1" aria-label="Зменшити missTolerance" disabled>-</button>
+    <button type="button" data-tracking-setting="missTolerance" data-direction="1" aria-label="Збільшити missTolerance" disabled>+</button>
+  </div>
+</section>
 <button id="sound-toggle" type="button" aria-pressed="false" hidden>Увімкнути звук</button>
 <a-scene mindar-image="imageTargetSrc: ./target.mind;
                        filterMinCF: 0.0001;
@@ -135,6 +193,16 @@
     const soundToggle = document.getElementById('sound-toggle');
     const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
     const scene = document.querySelector('a-scene');
+    const trackingControls = document.getElementById('tracking-controls');
+    const trackingSettingDefinitions = [
+      { key: 'filterMinCF', step: 0.0001, minimum: 0.0001, decimals: 4 },
+      { key: 'filterBeta', step: 1, minimum: 0, decimals: 0 },
+      { key: 'warmupTolerance', step: 1, minimum: 0, decimals: 0 },
+      { key: 'missTolerance', step: 1, minimum: 0, decimals: 0 }
+    ];
+    let trackingSettings = null;
+    let activeTrackingPress = null;
+    let suppressedTrackingClick = null;
     let activeCard = cards[0];
     let transitionTarget = null;
     let transitionMode = null;
@@ -150,6 +218,126 @@
       up:    'flip',
       down:  'flip'
     };
+
+    function renderTrackingSettings() {
+      trackingSettingDefinitions.forEach(({ key, decimals }) => {
+        const output = trackingControls.querySelector(`[data-tracking-value="${key}"]`);
+        if (!output) throw new Error(`Tracking setting display is missing: ${key}`);
+        output.textContent = trackingSettings[key].toFixed(decimals);
+      });
+    }
+
+    function initializeTrackingSettings() {
+      const sceneSettings = scene.getAttribute('mindar-image');
+      if (!sceneSettings) throw new Error('MindAR image tracking settings are unavailable.');
+
+      trackingSettings = Object.fromEntries(
+        trackingSettingDefinitions.map(({ key }) => [key, sceneSettings[key]])
+      );
+      trackingSettingDefinitions.forEach(({ key }) => {
+        if (!Number.isFinite(trackingSettings[key])) {
+          throw new Error(`MindAR image tracking setting is invalid: ${key}`);
+        }
+      });
+      renderTrackingSettings();
+      trackingControls.querySelectorAll('button').forEach(button => {
+        button.disabled = false;
+      });
+    }
+
+    function applyTrackingSettings() {
+      const system = scene.systems['mindar-image-system'];
+      if (!system) throw new Error('MindAR image tracking is not initialized.');
+
+      Object.assign(system, trackingSettings);
+      if (!system.controller) return;
+
+      Object.assign(system.controller, trackingSettings);
+      system.controller.trackingStates.forEach(({ filter }) => {
+        filter.minCutOff = trackingSettings.filterMinCF;
+        filter.beta = trackingSettings.filterBeta;
+      });
+    }
+
+    function adjustTrackingSetting(button) {
+      const definition = trackingSettingDefinitions.find(
+        setting => setting.key === button.dataset.trackingSetting
+      );
+      if (!definition) throw new Error(`Unknown tracking setting: ${button.dataset.trackingSetting}`);
+
+      const precision = 10 ** definition.decimals;
+      const direction = Number(button.dataset.direction);
+      trackingSettings[definition.key] = Math.max(
+        definition.minimum,
+        Math.round((trackingSettings[definition.key] + direction * definition.step) * precision) / precision
+      );
+      renderTrackingSettings();
+      applyTrackingSettings();
+    }
+
+    function stopTrackingRepeat(event) {
+      if (!activeTrackingPress ||
+          (event && event.pointerId !== activeTrackingPress.pointerId)) return;
+
+      const press = activeTrackingPress;
+      window.clearTimeout(press.delayTimer);
+      window.clearInterval(press.repeatTimer);
+      activeTrackingPress = null;
+      if (press.didRepeat) {
+        suppressedTrackingClick = { button: press.button, expiresAt: performance.now() + 500 };
+      }
+    }
+
+    trackingControls.addEventListener('pointerdown', event => {
+      const button = event.target.closest('button[data-tracking-setting]');
+      if (!button || button.disabled || !event.isPrimary ||
+          (event.pointerType === 'mouse' && event.button !== 0)) return;
+
+      stopTrackingRepeat();
+      const press = {
+        button,
+        pointerId: event.pointerId,
+        didRepeat: false,
+        delayTimer: 0,
+        repeatTimer: 0
+      };
+      activeTrackingPress = press;
+      press.delayTimer = window.setTimeout(() => {
+        if (activeTrackingPress !== press) return;
+        press.didRepeat = true;
+        adjustTrackingSetting(button);
+        press.repeatTimer = window.setInterval(() => {
+          if (activeTrackingPress === press) adjustTrackingSetting(button);
+        }, 100);
+      }, 1000);
+    });
+
+    document.addEventListener('pointerup', stopTrackingRepeat, true);
+    document.addEventListener('pointercancel', stopTrackingRepeat, true);
+    window.addEventListener('blur', () => {
+      stopTrackingRepeat();
+      suppressedTrackingClick = null;
+    });
+
+    trackingControls.addEventListener('click', event => {
+      const button = event.target.closest('button[data-tracking-setting]');
+      if (!button) return;
+
+      if (event.detail > 0 && suppressedTrackingClick) {
+        const shouldSuppress = suppressedTrackingClick.button === button &&
+          performance.now() <= suppressedTrackingClick.expiresAt;
+        suppressedTrackingClick = null;
+        if (shouldSuppress) {
+          event.preventDefault();
+          return;
+        }
+      }
+      adjustTrackingSetting(button);
+    });
+    ['pointerdown', 'pointerup', 'pointercancel'].forEach(eventName => {
+      trackingControls.addEventListener(eventName, event => event.stopPropagation());
+    });
+    if (scene.hasLoaded) initializeTrackingSettings();
 
     const actions = {
       nextSet() { setIdx = (setIdx + 1) % sets.length; side = 'front'; },
@@ -504,6 +692,7 @@
     });
 
     scene.addEventListener('loaded', () => {
+      if (!trackingSettings) initializeTrackingSettings();
       render(activeCard);
       preloadProgress.hidden = false;
       preloadMedia();
