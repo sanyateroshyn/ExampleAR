@@ -6,6 +6,94 @@
   <title>AR</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script>
+    // Стабілізатор пози: читає "сиру" позу з source (mindar-image-target)
+    // і віддає стабільну позу своїм дітям.
+    //  - перший трекінг запам'ятовується, далі поза ЗАМОРОЖЕНА (мертва зона);
+    //  - розморожується, лише якщо маркер зсунувся більше ніж deadPos / deadRot;
+    //  - після розморозки м'яко наздоганяє сиру позу (follow), а при критичному
+    //    стрибку (critPos / critRot) наздоганяє швидко;
+    //  - коли поза знову заспокоїлась - заморожується на новому місці.
+    AFRAME.registerComponent('pose-stabilizer', {
+      schema: {
+        source:  { type: 'selector' },
+        deadPos: { default: 3 },   // мертва зона позиції, % ширини маркера
+        deadRot: { default: 2 },   // мертва зона повороту, градуси
+        follow:  { default: 8 },   // швидкість наздоганяння, 1/с
+        critPos: { default: 35 },  // "критичний" зсув, % ширини маркера
+        critRot: { default: 20 }   // "критичний" поворот, градуси
+      },
+      init() {
+        const T = AFRAME.THREE;
+        this.rawPos = new T.Vector3();
+        this.rawQuat = new T.Quaternion();
+        this.rawScale = new T.Vector3(1, 1, 1);
+        this.pos = new T.Vector3();
+        this.quat = new T.Quaternion();
+        this.scl = new T.Vector3(1, 1, 1);
+        this.hasPose = false;
+        this.following = true;
+        this.calm = 0;
+        this.el.object3D.visible = false;
+      },
+      tick(time, delta) {
+        const srcEl = this.data.source;
+        if (!srcEl) return;
+        const input = srcEl.object3D;
+        const out = this.el.object3D;
+
+        if (!input.visible) {            // маркер втрачено
+          out.visible = false;
+          this.hasPose = false;
+          return;
+        }
+        if (input.matrixAutoUpdate) input.updateMatrix();   // demo-режим
+        input.matrix.decompose(this.rawPos, this.rawQuat, this.rawScale);
+
+        if (!this.hasPose) {             // перше (або повторне) знаходження
+          this.pos.copy(this.rawPos);
+          this.quat.copy(this.rawQuat);
+          this.scl.copy(this.rawScale);
+          this.hasPose = true;
+          this.following = true;         // перші кадри ще наздоганяємо, потім заморозимось
+          this.calm = 0;
+        } else {
+          const d = this.data;
+          const dt = Math.min(delta || 16, 100) / 1000;
+          const unit = this.rawScale.x || 1;
+          const posErr = this.rawPos.distanceTo(this.pos) / unit * 100;
+          const rotErr = this.rawQuat.angleTo(this.quat) * 180 / Math.PI;
+
+          if (!this.following && (posErr > d.deadPos || rotErr > d.deadRot)) {
+            this.following = true;       // реальний рух - розморожуємо
+            this.calm = 0;
+          }
+
+          if (this.following) {
+            const critical = posErr > d.critPos || rotErr > d.critRot;
+            const k = 1 - Math.exp(-d.follow * dt);
+            const a = critical ? Math.max(k, 0.6) : k;
+            this.pos.lerp(this.rawPos, a);
+            this.quat.slerp(this.rawQuat, a);
+            this.scl.lerp(this.rawScale, a);
+
+            const pe = this.rawPos.distanceTo(this.pos) / unit * 100;
+            const re = this.rawQuat.angleTo(this.quat) * 180 / Math.PI;
+            if (pe < d.deadPos * 0.5 && re < d.deadRot * 0.5) {
+              if (++this.calm >= 6) this.following = false;   // заспокоїлось - морозимо
+            } else {
+              this.calm = 0;
+            }
+          }
+        }
+
+        out.position.copy(this.pos);
+        out.quaternion.copy(this.quat);
+        out.scale.copy(this.scl);
+        out.visible = true;
+      }
+    });
+  </script>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; }
     #preload-overlay {
@@ -39,9 +127,27 @@
       text-align: center;
       pointer-events: none;
     }
-    #tracking-controls {
+    #tracking-toggle {
       position: fixed;
       top: max(60px, calc(env(safe-area-inset-top) + 48px));
+      right: 12px;
+      z-index: 9998;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(15, 15, 15, 0.88);
+      color: #fff;
+      font-size: 20px;
+      line-height: 40px;
+      touch-action: manipulation;
+    }
+    #tracking-toggle[aria-expanded="true"] { background: #2d6cdf; }
+    #tracking-controls[hidden] { display: none; }
+    #tracking-controls {
+      position: fixed;
+      top: max(108px, calc(env(safe-area-inset-top) + 96px));
       right: 12px;
       z-index: 9998;
       width: min(280px, calc(100vw - 24px));
@@ -98,6 +204,7 @@
 <div id="demo-banner" role="status" hidden>
   Демо трекінгу: натисни картку, щоб перевернути; свайпай, щоб змінити.
 </div>
+<button id="tracking-toggle" type="button" aria-expanded="true" aria-controls="tracking-controls" aria-label="Сховати налаштування трекінгу" title="Налаштування">&#9881;</button>
 <section id="tracking-controls" aria-label="Налаштування трекінгу">
   <h2>Налаштування трекінгу</h2>
   <div class="tracking-control-row">
@@ -124,6 +231,25 @@
     <button type="button" data-tracking-setting="missTolerance" data-direction="-1" aria-label="Зменшити missTolerance" disabled>-</button>
     <button type="button" data-tracking-setting="missTolerance" data-direction="1" aria-label="Збільшити missTolerance" disabled>+</button>
   </div>
+  <h2 style="margin-top:10px">Стабілізація</h2>
+  <div class="tracking-control-row">
+    <span>stabPos, %</span>
+    <output data-tracking-value="stabPos" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="stabPos" data-direction="-1" aria-label="Зменшити stabPos" disabled>-</button>
+    <button type="button" data-tracking-setting="stabPos" data-direction="1" aria-label="Збільшити stabPos" disabled>+</button>
+  </div>
+  <div class="tracking-control-row">
+    <span>stabRot, °</span>
+    <output data-tracking-value="stabRot" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="stabRot" data-direction="-1" aria-label="Зменшити stabRot" disabled>-</button>
+    <button type="button" data-tracking-setting="stabRot" data-direction="1" aria-label="Збільшити stabRot" disabled>+</button>
+  </div>
+  <div class="tracking-control-row">
+    <span>stabFollow</span>
+    <output data-tracking-value="stabFollow" aria-live="polite"></output>
+    <button type="button" data-tracking-setting="stabFollow" data-direction="-1" aria-label="Зменшити stabFollow" disabled>-</button>
+    <button type="button" data-tracking-setting="stabFollow" data-direction="1" aria-label="Збільшити stabFollow" disabled>+</button>
+  </div>
 </section>
 <button id="sound-toggle" type="button" aria-pressed="false" hidden>Увімкнути звук</button>
 <a-scene mindar-image="imageTargetSrc: ./target.mind;
@@ -148,7 +274,11 @@
               cursor="fuse: false; rayOrigin: mouse;"
               raycaster="far: 10000; objects: .clickable"></a-camera>
 
-    <a-entity id="target" mindar-image-target="targetIndex: 0">
+    <!-- сирий трекінг MindAR: з нього лише читається поза -->
+    <a-entity id="target" mindar-image-target="targetIndex: 0"></a-entity>
+
+    <!-- стабілізований корінь: сюди переїхав весь контент -->
+    <a-entity id="stable-root" pose-stabilizer="source: #target">
       <a-entity id="container" position="0 0 0" scale="1.6 1.6 1.6">
         <a-image id="card-a" class="clickable" src="#1_1_back"
                  material="transparent: true; opacity: 1; depthWrite: false"
@@ -194,11 +324,15 @@
     const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
     const scene = document.querySelector('a-scene');
     const trackingControls = document.getElementById('tracking-controls');
+    const stableRoot = document.getElementById('stable-root');
     const trackingSettingDefinitions = [
       { key: 'filterMinCF', step: 0.0001, minimum: 0.0001, decimals: 4 },
       { key: 'filterBeta', step: 1, minimum: 0, decimals: 0 },
       { key: 'warmupTolerance', step: 1, minimum: 0, decimals: 0 },
-      { key: 'missTolerance', step: 1, minimum: 0, decimals: 0 }
+      { key: 'missTolerance', step: 1, minimum: 0, decimals: 0 },
+      { key: 'stabPos', step: 0.5, minimum: 0, decimals: 1, local: true, initial: 3 },
+      { key: 'stabRot', step: 0.5, minimum: 0, decimals: 1, local: true, initial: 2 },
+      { key: 'stabFollow', step: 1, minimum: 1, decimals: 0, local: true, initial: 8 }
     ];
     let trackingSettings = null;
     let activeTrackingPress = null;
@@ -232,7 +366,7 @@
       if (!sceneSettings) throw new Error('MindAR image tracking settings are unavailable.');
 
       trackingSettings = Object.fromEntries(
-        trackingSettingDefinitions.map(({ key }) => [key, sceneSettings[key]])
+        trackingSettingDefinitions.map(({ key, local, initial }) => [key, local ? initial : sceneSettings[key]])
       );
       trackingSettingDefinitions.forEach(({ key }) => {
         if (!Number.isFinite(trackingSettings[key])) {
@@ -245,14 +379,26 @@
       });
     }
 
+    function applyStabilization() {
+      stableRoot.setAttribute('pose-stabilizer', 'deadPos', trackingSettings.stabPos);
+      stableRoot.setAttribute('pose-stabilizer', 'deadRot', trackingSettings.stabRot);
+      stableRoot.setAttribute('pose-stabilizer', 'follow', trackingSettings.stabFollow);
+    }
+
     function applyTrackingSettings() {
+      applyStabilization();
       const system = scene.systems['mindar-image-system'];
       if (!system) throw new Error('MindAR image tracking is not initialized.');
 
-      Object.assign(system, trackingSettings);
+      const mindarSettings = Object.fromEntries(
+        trackingSettingDefinitions
+          .filter(({ local }) => !local)
+          .map(({ key }) => [key, trackingSettings[key]])
+      );
+      Object.assign(system, mindarSettings);
       if (!system.controller) return;
 
-      Object.assign(system.controller, trackingSettings);
+      Object.assign(system.controller, mindarSettings);
       system.controller.trackingStates.forEach(({ filter }) => {
         filter.minCutOff = trackingSettings.filterMinCF;
         filter.beta = trackingSettings.filterBeta;
@@ -338,6 +484,30 @@
       trackingControls.addEventListener(eventName, event => event.stopPropagation());
     });
     if (scene.hasLoaded) initializeTrackingSettings();
+
+    // ---- показати / сховати панель налаштувань ----
+    const trackingToggle = document.getElementById('tracking-toggle');
+    const PANEL_KEY = 'trackingPanelHidden';
+
+    function setPanelVisible(visible, remember = true) {
+      trackingControls.hidden = !visible;
+      trackingToggle.setAttribute('aria-expanded', String(visible));
+      trackingToggle.setAttribute('aria-label',
+        visible ? 'Сховати налаштування трекінгу' : 'Показати налаштування трекінгу');
+      if (!visible) stopTrackingRepeat();
+      if (remember) {
+        try { localStorage.setItem(PANEL_KEY, visible ? '0' : '1'); } catch (error) { /* сховище недоступне */ }
+      }
+    }
+
+    trackingToggle.addEventListener('click', () => setPanelVisible(trackingControls.hidden));
+    ['pointerdown', 'pointerup', 'pointercancel'].forEach(eventName => {
+      trackingToggle.addEventListener(eventName, event => event.stopPropagation());
+    });
+
+    let panelHiddenBefore = false;
+    try { panelHiddenBefore = localStorage.getItem(PANEL_KEY) === '1'; } catch (error) { /* ігноруємо */ }
+    if (panelHiddenBefore) setPanelVisible(false, false);
 
     const actions = {
       nextSet() { setIdx = (setIdx + 1) % sets.length; side = 'front'; },
